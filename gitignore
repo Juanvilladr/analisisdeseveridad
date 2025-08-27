@@ -1,0 +1,21 @@
+.gitignore
+Especifica los archivos y carpetas que Git debe ignorar.
+Entornos virtuales
+venv/
+.venv/
+env/
+.env/
+
+Archivos de caché de Python
+pycache/
+*.pyc
+*.pyo
+*.pyd
+
+Archivos de configuración de IDEs
+.vscode/
+.idea/
+
+Archivos de sistema operativo
+.DS_Store
+Thumbs.db
