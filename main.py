@@ -1,34 +1,34 @@
 # main.py
 # Núcleo de la aplicación de backend para el análisis fitopatológico.
-# Versión 1.3.0: Añadido middleware de CORS para permitir la comunicación con el frontend.
+# Versión 1.4.0: Añadidas métricas avanzadas (tamaño de lesión) y guardado de archivos.
 
 # --- Importaciones de Librerías ---
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware # Importación clave para CORS
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict
 import numpy as np
 import cv2  # OpenCV para el procesamiento de imágenes
+import uuid  # --- NUEVO --- Para generar nombres de archivo únicos
+from pathlib import Path  # --- NUEVO --- Para manejar rutas de archivo de forma robusta
 
 # --- Inicialización de la Aplicación FastAPI ---
 app = FastAPI(
     title="API de Diagnóstico Fitopatológico",
     description="Procesa imágenes de hojas para análisis cuantitativo y morfológico.",
-    version="1.3.0"
+    version="1.4.0"
 )
 
 # --- Configuración de CORS ---
-# Este bloque permite que la aplicación frontend (abierta en el navegador)
-# pueda enviar peticiones a este servidor backend.
 origins = [
-    "*",  # Permite todas las origenes, ideal para desarrollo local.
+    "*",
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"], # Permite todos los métodos (GET, POST, etc.)
-    allow_headers=["*"], # Permite todas las cabeceras
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -72,13 +72,22 @@ def analyze_leaf_image(image_bytes: bytes) -> Dict:
         area_damage = (damaged_pixels / total_leaf_pixels) * 100
 
         final_damaged_mask = cv2.bitwise_and(damaged_mask, foreground_mask)
-        num_labels, _, _, _ = cv2.connectedComponentsWithStats(final_damaged_mask, 4, cv2.CV_32S)
         
-        lesion_count = num_labels - 1
+        # --- MODIFICADO --- Se capturan más estadísticas para el nuevo cálculo
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(final_damaged_mask, 4, cv2.CV_32S)
+        lesion_count = num_labels - 1  # Restamos 1 para excluir el fondo
+
+        # --- NUEVO --- Cálculo del tamaño promedio de las lesiones
+        avg_lesion_size = 0
+        if lesion_count > 0:
+            # Obtenemos el área de cada lesión (componente) excluyendo el fondo (índice 0)
+            lesion_areas = stats[1:, cv2.CC_STAT_AREA]
+            avg_lesion_size = np.mean(lesion_areas)
 
         return {
             "area_afectada_pct": round(area_damage, 2),
             "conteo_lesiones": lesion_count,
+            "tamanio_promedio_lesion_px": round(avg_lesion_size, 2), # Nueva métrica añadida
             "procesamiento_exitoso": True
         }
 
@@ -104,16 +113,33 @@ async def analizar_muestra(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="El archivo proporcionado no es una imagen.")
     
     image_bytes = await file.read()
+
+    # --- NUEVO: CÓDIGO PARA GUARDAR LA IMAGEN ---
+    # Crea una carpeta 'uploads' en el directorio del proyecto si no existe
+    upload_dir = Path("uploads")
+    upload_dir.mkdir(exist_ok=True)
+    
+    # Genera un nombre de archivo único para evitar sobreescribir y lo guarda
+    file_extension = Path(file.filename).suffix
+    unique_filename = f"{uuid.uuid4()}{file_extension}"
+    with open(upload_dir / unique_filename, "wb") as f:
+        f.write(image_bytes)
+    # --- FIN DEL CÓDIGO PARA GUARDAR ---
     
     results = analyze_leaf_image(image_bytes)
     
     if not results["procesamiento_exitoso"]:
         raise HTTPException(status_code=500, detail=f"Ocurrió un error al procesar la imagen: {results.get('error', 'Error desconocido')}")
 
+    # --- MODIFICADO --- Se añade el nombre del archivo guardado a la respuesta
     return {
-        "nombre_archivo": file.filename,
+        "nombre_archivo_original": file.filename,
+        "nombre_archivo_guardado": unique_filename,
         "resultados": results
     }
+
+# --- Para ejecutar el servidor localmente, usar el comando: ---
+# uvicorn main:app --reload
 
 # --- Para ejecutar el servidor localmente, usar el comando: ---
 # uvicorn main:app --reload
